@@ -5,13 +5,15 @@ and exposes read-only API endpoints for the dashboard UI.
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 from backend.db import client as db_client
 from backend.health import snapshot as health_snapshot
 from backend.services import settings_service
+from backend.diagnostics_system import new_trace, trace_step, trace_error, get_metrics_snapshot
+from backend.diagnostics_system.metrics import drain_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -29,59 +31,118 @@ def set_owner_id(owner_id: int) -> None:
 
 @app.get("/health")
 async def health():
+    new_trace(correlation_id="health-check")
+    trace_step("web", "app", "health_check", function="health", status="success")
     return health_snapshot()
 
 
 @app.get("/api/saves")
 async def list_saves(limit: int = 50, offset: int = 0):
+    new_trace(correlation_id=f"api:saves:{offset}")
+    trace_step("web", "app", "api_saves_list", function="list_saves",
+               status="started", limit=limit, offset=offset)
     try:
         items, total = await db_client.list_saves(_owner_id, limit=limit, offset=offset)
+        trace_step("web", "app", "api_saves_list", function="list_saves",
+                   status="success", count=len(items) if items else 0, total=total)
         return {"items": items, "total": total}
     except Exception as exc:
+        trace_error("web", "app", "list_saves", exc)
         logger.error("api/saves error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/saves/{save_code}")
 async def get_save(save_code: str):
+    new_trace(correlation_id=f"api:save:{save_code}")
+    trace_step("web", "app", "api_save_get", function="get_save",
+               status="started", save_code=save_code)
     try:
         row = await db_client.query_save(save_code)
         if not row:
+            trace_step("web", "app", "api_save_get", function="get_save",
+                       status="not_found", save_code=save_code)
             raise HTTPException(status_code=404, detail="Not found")
+        trace_step("web", "app", "api_save_get", function="get_save",
+                   status="success", save_code=save_code)
         return row
     except HTTPException:
         raise
     except Exception as exc:
+        trace_error("web", "app", "get_save", exc, save_code=save_code)
         logger.error("api/saves/%s error: %s", save_code, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/bio")
 async def get_bio():
+    new_trace(correlation_id="api:bio")
+    trace_step("web", "app", "api_bio", function="get_bio", status="started")
     try:
         state = await db_client.get_bio_state(_owner_id)
+        trace_step("web", "app", "api_bio", function="get_bio", status="success")
         return state or {}
     except Exception as exc:
+        trace_error("web", "app", "get_bio", exc)
         logger.error("api/bio error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/settings")
 async def get_settings():
+    new_trace(correlation_id="api:settings")
+    trace_step("web", "app", "api_settings", function="get_settings", status="started")
     try:
-        return settings_service.get_all()
+        result = settings_service.get_all()
+        trace_step("web", "app", "api_settings", function="get_settings", status="success")
+        return result
     except Exception as exc:
+        trace_error("web", "app", "get_settings", exc)
         logger.error("api/settings error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/logs")
 async def get_logs(limit: int = 100):
+    new_trace(correlation_id="api:logs")
+    trace_step("web", "app", "api_logs", function="get_logs", status="started", limit=limit)
     try:
         logs = await db_client.list_logs(_owner_id, limit=limit)
+        trace_step("web", "app", "api_logs", function="get_logs",
+                   status="success", count=len(logs) if logs else 0)
         return {"logs": logs}
     except Exception as exc:
+        trace_error("web", "app", "get_logs", exc)
         logger.error("api/logs error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/diagnostics/traces")
+async def get_traces(limit: int = 50, layer: str | None = None):
+    new_trace(correlation_id="api:diag:traces")
+    try:
+        from backend.diagnostics_system.batch_writer import _trace_buffer
+        traces = list(_trace_buffer[-limit:])
+        if layer:
+            traces = [t for t in traces if t.get("layer") == layer]
+        trace_step("web", "app", "api_diag_traces", function="get_traces",
+                   status="success", count=len(traces))
+        return {"traces": traces}
+    except Exception as exc:
+        trace_error("web", "app", "get_traces", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/diagnostics/metrics")
+async def get_metrics():
+    new_trace(correlation_id="api:diag:metrics")
+    try:
+        metrics = get_metrics_snapshot()
+        trace_step("web", "app", "api_diag_metrics", function="get_metrics",
+                   status="success", count=len(metrics))
+        return {"metrics": metrics}
+    except Exception as exc:
+        trace_error("web", "app", "get_metrics", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

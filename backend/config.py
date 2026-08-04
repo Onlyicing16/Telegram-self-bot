@@ -7,6 +7,8 @@ Supabase is optional — the bot runs without it (in-memory fallback).
 import os
 import sys
 
+from backend.diagnostics_system import trace_step
+
 REQUIRED = [
     "API_ID",
     "API_HASH",
@@ -25,6 +27,9 @@ def load() -> dict:
     supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
     bot_token = os.getenv("BOT_TOKEN", "")
+
+    trace_step("runtime", "config", "config_loaded", function="load", status="success",
+               supabase_available=bool(supabase_url and supabase_key))
 
     return {
         "API_ID": int(os.environ["API_ID"]),

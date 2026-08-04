@@ -31,6 +31,8 @@ import backend.config as cfg_module
 from backend.runtime.supervisor import RuntimeSupervisor
 from backend.runtime.tracer import trace, trace_exception, trace_uncaught
 from backend.runtime.task_guard import guarded_create_task
+from backend.diagnostics_system import new_trace, trace_step, trace_error
+from backend.diagnostics_system.batch_writer import set_db_client, start_batch_writer, stop_batch_writer
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -64,6 +66,9 @@ def _async_exception_handler(loop, context):
 
 
 async def main() -> None:
+    new_trace(correlation_id="startup")
+    trace_step("runtime", "main", "startup", function="main", status="started")
+
     cfg = cfg_module.load()
 
     loop = asyncio.get_running_loop()
@@ -80,12 +85,26 @@ async def main() -> None:
     supervisor = RuntimeSupervisor(cfg)
     supervisor_placeholder[0] = supervisor
 
+    try:
+        from backend.db import client as db_client
+        if db_client.is_available():
+            set_db_client(db_client.get_db())
+            start_batch_writer()
+            trace_step("runtime", "main", "batch_writer_started",
+                        function="main", status="success")
+    except Exception as exc:
+        trace_error("runtime", "main", "batch_writer_setup", exc)
+        logger.warning("Diagnostics batch writer setup failed: %s", exc)
+
     await supervisor.start()
 
     await supervisor.shutdown_event.wait()
 
+    trace_step("runtime", "main", "shutdown", function="main", status="started")
+    await stop_batch_writer()
     await supervisor.stop()
 
+    trace_step("runtime", "main", "shutdown_complete", function="main", status="success")
     logger.info("LifeOS stopped cleanly.")
 
 

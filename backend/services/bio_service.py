@@ -9,36 +9,46 @@ from datetime import datetime
 from backend.bio import engine as bio_engine
 from backend.db import client as db_client
 from backend.diagnostics import record_event
+from backend.diagnostics_system import measure, trace_step
 
 logger = logging.getLogger(__name__)
 
 
 async def do_on(client, owner_id: int, tz_str: str) -> str:
-    try:
-        await db_client.get_or_create_bio_state(owner_id)
-        await db_client.update_bio_state(owner_id, {"is_active": True})
-    except Exception as exc:
-        return f"❌ DB error: {exc}"
-    bio_engine.start_cron(client, owner_id, tz_str)
-    record_event("bio", "cron on", 0, "SUCCESS")
-    state = await db_client.get_or_create_bio_state(owner_id)
-    preview = bio_engine.render_bio(
-        state.get("template", "🕒 {time} | 💭 {mood}"),
-        state.get("mood", "😊"),
-        state.get("custom_text", ""),
-        tz_str,
-    )
-    return f"✅ Bio cron **ON**\nPreview: `{preview}`"
+    with measure("service", "bio_service", "do_on", owner_id=owner_id) as m:
+        try:
+            await db_client.get_or_create_bio_state(owner_id)
+            await db_client.update_bio_state(owner_id, {"is_active": True})
+        except Exception as exc:
+            trace_step("service", "bio_service", "do_on",
+                        function="do_on", status="db_error",
+                        error=str(exc))
+            return f"❌ DB error: {exc}"
+        bio_engine.start_cron(client, owner_id, tz_str)
+        record_event("bio", "cron on", 0, "SUCCESS")
+        state = await db_client.get_or_create_bio_state(owner_id)
+        preview = bio_engine.render_bio(
+            state.get("template", "🕒 {time} | 💭 {mood}"),
+            state.get("mood", "😊"),
+            state.get("custom_text", ""),
+            tz_str,
+        )
+        m.set_context(preview=preview)
+        return f"✅ Bio cron **ON**\nPreview: `{preview}`"
 
 
 async def do_off(owner_id: int) -> str:
-    try:
-        await db_client.update_bio_state(owner_id, {"is_active": False})
-    except Exception as exc:
-        return f"❌ DB error: {exc}"
-    bio_engine.stop_cron()
-    record_event("bio", "cron off", 0, "SUCCESS")
-    return "⏹ Bio cron **OFF**"
+    with measure("service", "bio_service", "do_off", owner_id=owner_id):
+        try:
+            await db_client.update_bio_state(owner_id, {"is_active": False})
+        except Exception as exc:
+            trace_step("service", "bio_service", "do_off",
+                        function="do_off", status="db_error",
+                        error=str(exc))
+            return f"❌ DB error: {exc}"
+        bio_engine.stop_cron()
+        record_event("bio", "cron off", 0, "SUCCESS")
+        return "⏹ Bio cron **OFF**"
 
 
 async def do_show(owner_id: int, tz_str: str) -> str:

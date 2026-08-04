@@ -8,48 +8,51 @@ import logging
 
 from backend.db import client as db_client
 from backend.diagnostics import record_event
+from backend.diagnostics_system import measure, trace_step
 from backend.services import settings_service
 
 logger = logging.getLogger(__name__)
 
 
 async def do_del_n(client, chat_id, n: int) -> str:
-    if n < 1 or n > 500:
-        return "⚠️ n must be between 1 and 500."
-    t0 = asyncio.get_event_loop().time()
-    try:
-        msg_ids = []
-        async for msg in client.iter_messages(chat_id, limit=n + 5, from_user="me"):
-            msg_ids.append(msg.id)
-            if len(msg_ids) >= n:
-                break
-        if msg_ids:
-            await client.delete_messages(chat_id, msg_ids[:n])
-        record_event("delete", "del n", (asyncio.get_event_loop().time() - t0) * 1000, "SUCCESS")
-        return f"🗑 Deleted `{len(msg_ids[:n])}` messages."
-    except Exception as exc:
-        logger.error("del n failed: %s", exc)
-        record_event("delete", "del n", 0, "ERROR", str(exc))
-        return f"❌ Delete failed: {exc}"
+    with measure("service", "delete_service", "do_del_n", chat_id=str(chat_id), n=n):
+        if n < 1 or n > 500:
+            return "⚠️ n must be between 1 and 500."
+        t0 = asyncio.get_event_loop().time()
+        try:
+            msg_ids = []
+            async for msg in client.iter_messages(chat_id, limit=n + 5, from_user="me"):
+                msg_ids.append(msg.id)
+                if len(msg_ids) >= n:
+                    break
+            if msg_ids:
+                await client.delete_messages(chat_id, msg_ids[:n])
+            record_event("delete", "del n", (asyncio.get_event_loop().time() - t0) * 1000, "SUCCESS")
+            return f"🗑 Deleted `{len(msg_ids[:n])}` messages."
+        except Exception as exc:
+            logger.error("del n failed: %s", exc)
+            record_event("delete", "del n", 0, "ERROR", str(exc))
+            return f"❌ Delete failed: {exc}"
 
 
 async def do_del_id(client, chat_id, start_id: int) -> str:
-    t0 = asyncio.get_event_loop().time()
-    try:
-        msg_ids = []
-        async for msg in client.iter_messages(chat_id, min_id=start_id - 1, from_user="me"):
-            msg_ids.append(msg.id)
-            if len(msg_ids) >= settings_service.delete_batch_size():
+    with measure("service", "delete_service", "do_del_id", chat_id=str(chat_id), start_id=start_id):
+        t0 = asyncio.get_event_loop().time()
+        try:
+            msg_ids = []
+            async for msg in client.iter_messages(chat_id, min_id=start_id - 1, from_user="me"):
+                msg_ids.append(msg.id)
+                if len(msg_ids) >= settings_service.delete_batch_size():
+                    await client.delete_messages(chat_id, msg_ids)
+                    msg_ids = []
+            if msg_ids:
                 await client.delete_messages(chat_id, msg_ids)
-                msg_ids = []
-        if msg_ids:
-            await client.delete_messages(chat_id, msg_ids)
-        record_event("delete", "del id", (asyncio.get_event_loop().time() - t0) * 1000, "SUCCESS")
-        return f"🗑 Deleted messages from ID `{start_id}` forward."
-    except Exception as exc:
-        logger.error("del id failed: %s", exc)
-        record_event("delete", "del id", 0, "ERROR", str(exc))
-        return f"❌ Delete failed: {exc}"
+            record_event("delete", "del id", (asyncio.get_event_loop().time() - t0) * 1000, "SUCCESS")
+            return f"🗑 Deleted messages from ID `{start_id}` forward."
+        except Exception as exc:
+            logger.error("del id failed: %s", exc)
+            record_event("delete", "del id", 0, "ERROR", str(exc))
+            return f"❌ Delete failed: {exc}"
 
 
 async def do_del_code(client, owner_id: int, code: str) -> str:

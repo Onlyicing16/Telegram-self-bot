@@ -17,6 +17,7 @@ from telethon import events
 
 from backend.bot.handlers import misc, save, retrieve, delete, organize, bio, discover, database, username, ai
 from backend.runtime.tracer import trace_handler_exception
+from backend.diagnostics_system import new_trace, trace_step, trace_error
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ def register_runtime_hooks(client) -> None:
         raw = event.raw_text or ""
         if not raw.startswith("."):
             return
+        new_trace(correlation_id=f"cmd:{event.chat_id}:{event.message.id}")
         try:
             set_last_update()
             set_last_telethon_event()
@@ -42,6 +44,10 @@ def register_runtime_hooks(client) -> None:
         except Exception:
             pass
         logger.info("COMMAND_RECEIVED '%s' chat=%s msg=%s", raw[:80], event.chat_id, event.message.id)
+        trace_step("router", "router", "command_received",
+                    function="_runtime_command_trace",
+                    status="received",
+                    command=raw[:80], chat_id=str(event.chat_id), msg_id=str(event.message.id))
 
     @client.on(events.NewMessage())
     async def _runtime_update_hook(event):
@@ -93,6 +99,11 @@ def register_all(client, owner_id: int, tz_str: str):
         try:
             fn()
             logger.info("REGISTER_ALL: handler '%s' registered OK on client id(%s)", name, id(client))
+            trace_step("router", "router", "handler_registered",
+                        function="register_all",
+                        status="success", handler=name)
         except Exception as exc:
             traceback.print_exc(file=sys.stdout)
             logger.error("REGISTER_ALL: handler '%s' registration FAILED on client id(%s): %s", name, id(client), exc)
+            trace_error("router", "router", "register_all", exc, handler=name)
+            trace_handler_exception(f"register:{name}", exc)

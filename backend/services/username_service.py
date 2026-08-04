@@ -10,36 +10,39 @@ from datetime import datetime
 from backend.username import engine as username_engine
 from backend.db import client as db_client
 from backend.diagnostics import record_event
+from backend.diagnostics_system import measure
 
 logger = logging.getLogger(__name__)
 
 
 async def do_on(client, owner_id: int, tz_str: str) -> str:
-    try:
-        await db_client.get_or_create_username_state(owner_id)
-        await db_client.update_username_state(owner_id, {"is_active": True})
-    except Exception as exc:
-        return f"❌ DB error: {exc}"
-    username_engine.start_cron(client, owner_id, tz_str)
-    record_event("username", "cron on", 0, "SUCCESS")
-    state = await db_client.get_or_create_username_state(owner_id)
-    preview = username_engine.render_username(
-        state.get("template", "{time} | {mood}"),
-        state.get("mood", "😊"),
-        state.get("custom_text", ""),
-        tz_str,
-    )
-    return f"✅ Username sync **ON**\nPreview: `{preview}`"
+    with measure("service", "username_service", "do_on", owner_id=owner_id):
+        try:
+            await db_client.get_or_create_username_state(owner_id)
+            await db_client.update_username_state(owner_id, {"is_active": True})
+        except Exception as exc:
+            return f"❌ DB error: {exc}"
+        username_engine.start_cron(client, owner_id, tz_str)
+        record_event("username", "cron on", 0, "SUCCESS")
+        state = await db_client.get_or_create_username_state(owner_id)
+        preview = username_engine.render_username(
+            state.get("template", "{time} | {mood}"),
+            state.get("mood", "😊"),
+            state.get("custom_text", ""),
+            tz_str,
+        )
+        return f"✅ Username sync **ON**\nPreview: `{preview}`"
 
 
 async def do_off(owner_id: int) -> str:
-    try:
-        await db_client.update_username_state(owner_id, {"is_active": False})
-    except Exception as exc:
-        return f"❌ DB error: {exc}"
-    await username_engine.stop_cron()
-    record_event("username", "cron off", 0, "SUCCESS")
-    return "⏹ Username sync **OFF**"
+    with measure("service", "username_service", "do_off", owner_id=owner_id):
+        try:
+            await db_client.update_username_state(owner_id, {"is_active": False})
+        except Exception as exc:
+            return f"❌ DB error: {exc}"
+        await username_engine.stop_cron()
+        record_event("username", "cron off", 0, "SUCCESS")
+        return "⏹ Username sync **OFF**"
 
 
 async def do_show(owner_id: int, tz_str: str) -> str:
