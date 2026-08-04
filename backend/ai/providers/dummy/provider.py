@@ -67,6 +67,10 @@ class DummyProvider(BaseProvider):
         }
 
     def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> ProviderResponse:
+        from backend.diagnostics_system import trace_step
+        trace_step("ai_engine", "dummy_provider", "chat",
+                   function="chat", status="success",
+                   provider=self.name, message_count=len(messages))
         return ProviderResponse(
             text=DUMMY_TEXT,
             provider_name=self.name,
