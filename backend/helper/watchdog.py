@@ -14,6 +14,7 @@ import asyncio
 import logging
 
 from backend.runtime.task_guard import guarded_create_task
+from backend.diagnostics_system import trace_step, trace_error
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ def start() -> None:
         return
     _task = guarded_create_task(_watchdog_loop(), name="lifeos-helper-watchdog")
     logger.info("Helper watchdog started")
+    trace_step("background", "helper_watchdog", "started", function="start", status="success")
 
 
 def stop() -> None:
@@ -79,6 +81,8 @@ async def _watchdog_loop() -> None:
                 return
 
         except asyncio.CancelledError:
+            trace_step("background", "helper_watchdog", "cancelled", function="_watchdog_loop", status="cancelled")
             raise
         except Exception as exc:
+            trace_error("background", "helper_watchdog", "_watchdog_loop", exc, function="_watchdog_loop")
             logger.warning("Helper watchdog loop error: %s", exc)

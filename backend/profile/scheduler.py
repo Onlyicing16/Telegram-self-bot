@@ -24,6 +24,7 @@ from telethon.errors import FloodWaitError
 from telethon.tl.functions.account import UpdateProfileRequest
 
 from backend.diagnostics import record_event
+from backend.diagnostics_system import trace_step, trace_error
 from backend.runtime.tracer import trace, trace_exception
 from backend.runtime.task_guard import guarded_create_task
 
@@ -65,12 +66,7 @@ def _seconds_to_next_minute(tz) -> float:
 
 
 def register_updater(name: str, fn: UpdaterFn) -> None:
-    """Register a profile updater.
-
-    ``fn(owner_id, tz_str) -> dict[str, str] | None``
-    Returns a dict of UpdateProfileRequest fields (e.g. ``{"about": "..."}``,
-    ``{"first_name": "..."}``) or ``None`` if nothing changed.
-    """
+    """Register a profile updater."""
     _updaters.append((name, fn))
     logger.info("Profile updater registered: %s (total=%d)", name, len(_updaters))
 
@@ -201,6 +197,7 @@ def start_cron(client, owner_id: int, tz_str: str) -> None:
     )
     trace("PROFILE_CRON_START_REQUESTED")
     record_event("profile", "start_cron", 0, "SUCCESS")
+    trace_step("background", "profile_scheduler", "start_cron", function="start_cron", status="success", owner_id=owner_id)
 
 
 def update_client(client) -> None:
@@ -210,6 +207,7 @@ def update_client(client) -> None:
 
 async def stop_cron() -> None:
     global _task
+    trace_step("background", "profile_scheduler", "stop_cron", function="stop_cron", status="started")
     if _task and not _task.done():
         trace("PROFILE_CRON_STOP_REQUESTED")
         _task.cancel()
@@ -219,6 +217,7 @@ async def stop_cron() -> None:
             pass
     _task = None
     record_event("profile", "stop_cron", 0, "SUCCESS")
+    trace_step("background", "profile_scheduler", "stop_cron", function="stop_cron", status="success")
 
 
 def is_running() -> bool:

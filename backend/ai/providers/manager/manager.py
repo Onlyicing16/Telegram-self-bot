@@ -45,6 +45,8 @@ from backend.ai.providers.base.exceptions import ProviderUnavailable
 from backend.ai.providers.manager.config_manager import ProviderConfigManager
 from backend.ai.providers.manager.metrics import ProviderMetricsRegistry
 from backend.ai.providers.registry.registry import ProviderRegistry
+from backend.diagnostics_system import trace_step, trace_error
+from backend.diagnostics_system.metrics import record_latency
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +77,15 @@ class ProviderManager:
             response = provider.chat(messages, **kwargs)
             latency = time.perf_counter() - start
             self._metrics.record(provider_name, latency=latency, error="")
+            record_latency("provider_latency", start, provider=provider_name, function="chat")
+            trace_step("provider_manager", "manager", "chat_complete", function="chat", status="success", provider=provider_name)
             return response
         except Exception as exc:
             latency = time.perf_counter() - start
             error_msg = f"{type(exc).__name__}: {exc}"
             self._metrics.record(provider_name, latency=latency, error=error_msg)
+            record_latency("provider_latency", start, provider=provider_name, function="chat", result="error")
+            trace_error("provider_manager", "manager", "chat", exc, provider=provider_name, function="chat")
             logger.warning("ProviderManager: '%s' crashed during chat: %s", provider_name, exc)
             return self._fallback(messages, **kwargs)
 
@@ -92,10 +98,14 @@ class ProviderManager:
             response = provider.vision(messages, images, **kwargs)
             latency = time.perf_counter() - start
             self._metrics.record(provider_name, latency=latency, error="")
+            record_latency("provider_latency", start, provider=provider_name, function="vision")
+            trace_step("provider_manager", "manager", "vision_complete", function="vision", status="success", provider=provider_name)
             return response
         except Exception as exc:
             latency = time.perf_counter() - start
             self._metrics.record(provider_name, latency=latency, error=str(exc))
+            record_latency("provider_latency", start, provider=provider_name, function="vision", result="error")
+            trace_error("provider_manager", "manager", "vision", exc, provider=provider_name, function="vision")
             logger.warning("ProviderManager: '%s' crashed during vision: %s", provider_name, exc)
             return self._fallback_vision(messages, images, **kwargs)
 
