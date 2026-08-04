@@ -193,6 +193,112 @@ async def get_timeline_endpoint():
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/api/ai/status")
+async def get_ai_status():
+    new_trace(correlation_id="api:ai:status")
+    try:
+        from backend.ai.engine.engine import get_engine
+        from backend.ai.database.manager import get_repository_manager
+        engine = get_engine()
+        repos = get_repository_manager()
+        result = {
+            "engine_health": engine.engine_health(),
+            "active_provider": engine.provider_manager.get_active_name(),
+            "providers": engine.provider_manager.list_providers(),
+            "metrics": engine.metrics_snapshot(),
+            "repository_backend": "supabase" if repos.supabase_available else "in-memory",
+        }
+        trace_step("web", "app", "api_ai_status", function="get_ai_status", status="success")
+        return result
+    except Exception as exc:
+        trace_error("web", "app", "get_ai_status", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/ai/sessions")
+async def get_ai_sessions(limit: int = 10):
+    new_trace(correlation_id="api:ai:sessions")
+    try:
+        from backend.ai.database.manager import get_repository_manager
+        repos = get_repository_manager()
+        sessions = repos.session.list_sessions(_owner_id, limit=limit)
+        trace_step("web", "app", "api_ai_sessions", function="get_ai_sessions",
+                   status="success", count=len(sessions))
+        return {"sessions": [s.as_dict() for s in sessions]}
+    except Exception as exc:
+        trace_error("web", "app", "get_ai_sessions", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/ai/preferences")
+async def get_ai_preferences():
+    new_trace(correlation_id="api:ai:preferences")
+    try:
+        from backend.ai.database.manager import get_repository_manager
+        repos = get_repository_manager()
+        prefs = repos.preferences.get_or_create(_owner_id)
+        trace_step("web", "app", "api_ai_preferences", function="get_ai_preferences",
+                   status="success")
+        return prefs.as_dict()
+    except Exception as exc:
+        trace_error("web", "app", "get_ai_preferences", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/ai/usage")
+async def get_ai_usage(limit: int = 50):
+    new_trace(correlation_id="api:ai:usage")
+    try:
+        from backend.ai.database.manager import get_repository_manager
+        repos = get_repository_manager()
+        records = repos.usage.recent(_owner_id, limit=limit)
+        total = repos.usage.total_tokens(_owner_id)
+        trace_step("web", "app", "api_ai_usage", function="get_ai_usage",
+                   status="success", count=len(records), total_tokens=total)
+        return {"records": [r.as_dict() for r in records], "total_tokens": total}
+    except Exception as exc:
+        trace_error("web", "app", "get_ai_usage", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/ai/provider-stats")
+async def get_ai_provider_stats():
+    new_trace(correlation_id="api:ai:provider-stats")
+    try:
+        from backend.ai.database.manager import get_repository_manager
+        repos = get_repository_manager()
+        stats = repos.provider_stats.list_all(_owner_id)
+        trace_step("web", "app", "api_ai_provider_stats", function="get_ai_provider_stats",
+                   status="success", count=len(stats))
+        return {"stats": [s.as_dict() for s in stats]}
+    except Exception as exc:
+        trace_error("web", "app", "get_ai_provider_stats", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/ai/memory")
+async def get_ai_memory():
+    new_trace(correlation_id="api:ai:memory")
+    try:
+        from backend.ai.database.manager import get_repository_manager
+        from backend.ai.memory.types import MemoryTier, MemoryQuery
+        repos = get_repository_manager()
+        long_q = MemoryQuery(owner_id=_owner_id, tier=MemoryTier.LONG, limit=50)
+        perm_q = MemoryQuery(owner_id=_owner_id, tier=MemoryTier.PERMANENT, limit=50)
+        long_entries = repos.memory.query(long_q)
+        perm_entries = repos.memory.query(perm_q)
+        trace_step("web", "app", "api_ai_memory", function="get_ai_memory",
+                   status="success", long_count=len(long_entries),
+                   permanent_count=len(perm_entries))
+        return {
+            "long": [e.as_dict() for e in long_entries],
+            "permanent": [e.as_dict() for e in perm_entries],
+        }
+    except Exception as exc:
+        trace_error("web", "app", "get_ai_memory", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 def mount_static():
     if _DIST.exists():
         app.mount("/assets", StaticFiles(directory=str(_DIST / "assets")), name="assets")
