@@ -31,7 +31,7 @@ import backend.config as cfg_module
 from backend.runtime.supervisor import RuntimeSupervisor
 from backend.runtime.tracer import trace, trace_exception, trace_uncaught
 from backend.runtime.task_guard import guarded_create_task
-from backend.diagnostics_system import new_trace, trace_step, trace_error
+from backend.diagnostics_system import new_trace, trace_step, trace_error, init_config
 from backend.diagnostics_system.batch_writer import set_db_client, start_batch_writer, stop_batch_writer
 
 logging.basicConfig(
@@ -66,6 +66,7 @@ def _async_exception_handler(loop, context):
 
 
 async def main() -> None:
+    init_config()
     new_trace(correlation_id="startup")
     trace_step("runtime", "main", "startup", function="main", status="started")
 

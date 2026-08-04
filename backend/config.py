@@ -48,4 +48,6 @@ def load() -> dict:
         "DEST_CHANNEL_ID": os.getenv("DEST_CHANNEL_ID", ""),
         "BIO_UPDATE_ENABLED": os.getenv("BIO_UPDATE_ENABLED", "false").lower() == "true",
         "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO").upper(),
+        "DEBUG": os.getenv("DEBUG", "false").lower() in ("true", "1", "yes", "on"),
+        "TRACE_LEVEL": os.getenv("TRACE_LEVEL", "off").upper(),
     }
