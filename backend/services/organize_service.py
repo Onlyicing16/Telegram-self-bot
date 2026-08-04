@@ -8,6 +8,7 @@ import logging
 
 from backend.db import client as db_client
 from backend.diagnostics import record_event
+from backend.diagnostics_system import measure, trace_step
 from backend.services import settings_service
 
 logger = logging.getLogger(__name__)

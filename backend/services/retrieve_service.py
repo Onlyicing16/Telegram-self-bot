@@ -18,6 +18,7 @@ from datetime import datetime
 
 from backend.db import client as db_client
 from backend.diagnostics import record_event
+from backend.diagnostics_system import measure, trace_step
 
 logger = logging.getLogger(__name__)
 
@@ -96,24 +97,27 @@ def format_preview(row: dict) -> str:
 
 async def do_preview(self_client, owner_id: int, save_code: str) -> str:
     save_code = save_code.upper().strip()
-    t0 = asyncio.get_event_loop().time()
-    try:
-        row = await db_client.query_save(save_code)
-        record_event("database", "query_save", (asyncio.get_event_loop().time() - t0) * 1000, "SUCCESS")
-    except Exception as exc:
-        logger.error("preview db error: %s", exc)
-        record_event("database", "query_save", 0, "ERROR", str(exc))
-        return f"❌ DB error: {exc}"
-    if not row:
-        return f"❌ No item found for `{save_code}`"
-    await db_client.log(owner_id, "INFO", f"Preview {save_code}", {"save_code": save_code})
-    return format_preview(row)
+    with measure("service", "retrieve_service", "do_preview", save_code=save_code):
+        t0 = asyncio.get_event_loop().time()
+        try:
+            row = await db_client.query_save(save_code)
+            record_event("database", "query_save", (asyncio.get_event_loop().time() - t0) * 1000, "SUCCESS")
+        except Exception as exc:
+            logger.error("preview db error: %s", exc)
+            record_event("database", "query_save", 0, "ERROR", str(exc))
+            return f"❌ DB error: {exc}"
+        if not row:
+            return f"❌ No item found for `{save_code}`"
+        await db_client.log(owner_id, "INFO", f"Preview {save_code}", {"save_code": save_code})
+        return format_preview(row)
 
 
 async def do_retrieve(self_client, owner_id: int, save_code: str, target_chat: int) -> str:
     """Forward the saved media to target_chat and inject the metadata block
     into the caption. If the media had no caption, one is generated."""
     save_code = save_code.upper().strip()
+    from backend.diagnostics_system import trace_step as _trace_step
+    _trace_step("service", "retrieve_service", "do_retrieve", function="do_retrieve", status="started", save_code=save_code, target_chat=str(target_chat))
     t0 = asyncio.get_event_loop().time()
     try:
         row = await db_client.query_save(save_code)

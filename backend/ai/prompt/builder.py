@@ -49,23 +49,7 @@ from backend.ai.prompt.validator import validate_prompt_package
 
 @dataclass(frozen=True)
 class PromptPackage:
-    """The immutable output of the Prompt Builder.
-
-    This is the ONLY object a future provider will receive. It contains
-    everything needed to construct a model request, with no AI-specific
-    logic inside it.
-
-    Attributes:
-        system_prompt:          Merged system rules + platform constraints + runtime rules.
-        runtime_context:         Text block of runtime context (time, settings, AI state).
-        conversation_context:    Text block of conversation state (panel, flow, reply, history).
-        tool_context:            Text block of current/last tool metadata.
-        user_input:             The owner's raw text message.
-        metadata:               Dict with builder metadata (section count, format, timestamps).
-        estimated_tokens:       TokenBudget with all token estimates.
-        sections:               Dict mapping each ``PromptSection`` to its rendered text.
-                                 This is the raw material formatters consume.
-    """
+    """The immutable output of the Prompt Builder."""
 
     system_prompt: str
     runtime_context: str
@@ -78,30 +62,17 @@ class PromptPackage:
 
 
 class PromptBuilder:
-    """Assembles ``PromptPackage`` objects from ``ConversationContext``.
-
-    Stateless. No globals. No I/O. Receives a context, produces a
-    package. If the context changes, the caller builds a new context
-    and calls ``build()`` again — the package is immutable.
-
-    Usage::
-
-        builder = PromptBuilder()
-        package = builder.build(context)
-        # package is frozen — pass to a future provider
-    """
+    """Assembles ``PromptPackage`` objects from ``ConversationContext``."""
 
     __slots__ = ()
 
     def build(self, context: ConversationContext) -> PromptPackage:
-        """Assemble an immutable ``PromptPackage`` from a conversation context.
+        """Assemble an immutable ``PromptPackage`` from a conversation context."""
+        import time as _time
+        from backend.diagnostics_system import trace_step
+        from backend.diagnostics_system.metrics import record_latency
+        t0 = _time.perf_counter()
 
-        Args:
-            context: The ``ConversationContext`` produced by the Conversation Layer.
-
-        Returns:
-            A frozen ``PromptPackage`` with all sections in fixed order.
-        """
         sections = self._render_sections(context)
         budget = compute_budget(
             sections,
@@ -127,6 +98,9 @@ class PromptBuilder:
         )
 
         validate_prompt_package(package)
+        latency_ms = (_time.perf_counter() - t0) * 1000
+        record_latency("prompt_build", t0, function="build")
+        trace_step("prompt", "builder", "build_complete", function="build", status="success", latency_ms=round(latency_ms, 1), sections=len(sections))
         return package
 
     def _render_sections(
@@ -233,12 +207,7 @@ class PromptBuilder:
         return "\n".join(lines)
 
     def _render_tool_results(self, ctx: ConversationContext) -> str:
-        """Render the tool results block (future placeholder).
-
-        Currently returns empty string — tool results will be injected
-        here when the tool execution layer is built. The section exists
-        to maintain the fixed section order.
-        """
+        """Render the tool results block (future placeholder)."""
         if ctx.tool.last_tool_result:
             return f"[Tool Results]\n{ctx.tool.last_tool_result}"
         return ""
