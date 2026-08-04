@@ -17,7 +17,11 @@ from telethon import events
 
 from backend.bot.handlers import misc, save, retrieve, delete, organize, bio, discover, database, username, ai
 from backend.runtime.tracer import trace_handler_exception
-from backend.diagnostics_system import new_trace, trace_step, trace_error
+from backend.diagnostics_system import new_trace, trace_step, trace_error, new_request
+from backend.diagnostics_system.exc_context import exc_context_scope
+from backend.diagnostics_system.timeline import new_timeline, get_timeline
+from backend.diagnostics_system.debug_config import get_session_id as get_session_id_safe
+from backend.diagnostics_system.trace_context import get_trace_id as get_trace_id_safe
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +41,25 @@ def register_runtime_hooks(client) -> None:
         if not raw.startswith("."):
             return
         new_trace(correlation_id=f"cmd:{event.chat_id}:{event.message.id}")
-        try:
-            set_last_update()
-            set_last_telethon_event()
-            set_last_event_dispatch()
-        except Exception:
-            pass
-        logger.info("COMMAND_RECEIVED '%s' chat=%s msg=%s", raw[:80], event.chat_id, event.message.id)
-        trace_step("router", "router", "command_received",
-                    function="_runtime_command_trace",
-                    status="received",
-                    command=raw[:80], chat_id=str(event.chat_id), msg_id=str(event.message.id))
+        new_timeline(get_trace_id_safe(), f"req:{event.message.id}", get_session_id_safe())
+        with exc_context_scope(
+            command=raw[:80],
+            chat_id=str(event.chat_id),
+            msg_id=str(event.message.id),
+            user_id=str(event.sender_id),
+            handler="router",
+        ):
+            try:
+                set_last_update()
+                set_last_telethon_event()
+                set_last_event_dispatch()
+            except Exception:
+                pass
+            logger.info("COMMAND_RECEIVED '%s' chat=%s msg=%s", raw[:80], event.chat_id, event.message.id)
+            trace_step("router", "router", "command_received",
+                        function="_runtime_command_trace",
+                        status="received",
+                        command=raw[:80], chat_id=str(event.chat_id), msg_id=str(event.message.id))
 
     @client.on(events.NewMessage())
     async def _runtime_update_hook(event):

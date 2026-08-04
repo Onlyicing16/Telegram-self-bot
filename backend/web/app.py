@@ -14,6 +14,7 @@ from backend.health import snapshot as health_snapshot
 from backend.services import settings_service
 from backend.diagnostics_system import new_trace, trace_step, trace_error, get_metrics_snapshot
 from backend.diagnostics_system.metrics import drain_metrics
+from backend.diagnostics_system.performance import get_performance_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,52 @@ async def get_metrics():
         return {"metrics": metrics}
     except Exception as exc:
         trace_error("web", "app", "get_metrics", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/diagnostics/performance")
+async def get_performance():
+    new_trace(correlation_id="api:diag:perf")
+    try:
+        snapshot = get_performance_snapshot()
+        trace_step("web", "app", "api_diag_performance", function="get_performance",
+                   status="success")
+        return snapshot
+    except Exception as exc:
+        trace_error("web", "app", "get_performance", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/diagnostics/config")
+async def get_diag_config():
+    from backend.diagnostics_system.debug_config import is_debug, get_trace_level, get_session_id
+    new_trace(correlation_id="api:diag:config")
+    try:
+        config_info = {
+            "debug_enabled": is_debug(),
+            "trace_level": get_trace_level().name,
+            "session_id": get_session_id(),
+        }
+        trace_step("web", "app", "api_diag_config", function="get_diag_config",
+                   status="success")
+        return config_info
+    except Exception as exc:
+        trace_error("web", "app", "get_diag_config", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/diagnostics/timeline")
+async def get_timeline_endpoint():
+    from backend.diagnostics_system.timeline import get_timeline
+    new_trace(correlation_id="api:diag:timeline")
+    try:
+        tl = get_timeline()
+        result = tl.to_dict()
+        trace_step("web", "app", "api_diag_timeline", function="get_timeline_endpoint",
+                   status="success", step_count=result.get("step_count", 0))
+        return result
+    except Exception as exc:
+        trace_error("web", "app", "get_timeline_endpoint", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
