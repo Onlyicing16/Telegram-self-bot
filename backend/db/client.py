@@ -24,6 +24,8 @@ import string
 from datetime import datetime, timedelta, timezone
 
 from backend.diagnostics import record_event
+from backend.diagnostics_system import trace_step, trace_error
+from backend.diagnostics_system.metrics import record_latency
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +80,23 @@ def is_available() -> bool:
 
 async def _run_sync(fn, *args, **kwargs):
     """Run a synchronous DB function in a thread with a timeout."""
-    return await asyncio.wait_for(
-        asyncio.to_thread(fn, *args, **kwargs),
-        timeout=_DB_TIMEOUT,
-    )
+    import time as _time
+    t0 = _time.perf_counter()
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(fn, *args, **kwargs),
+            timeout=_DB_TIMEOUT,
+        )
+        record_latency("supabase_query", t0, function=getattr(fn, '__name__', 'unknown'))
+        return result
+    except asyncio.TimeoutError:
+        record_latency("supabase_query", t0, function=getattr(fn, '__name__', 'unknown'), result="timeout")
+        trace_step("database", "client", "query_timeout", function=getattr(fn, '__name__', 'unknown'), timeout=_DB_TIMEOUT)
+        raise
+    except Exception as exc:
+        record_latency("supabase_query", t0, function=getattr(fn, '__name__', 'unknown'), result="error")
+        trace_error("database", "client", getattr(fn, '__name__', 'unknown'), exc)
+        raise
 
 
 # ── bot_logs ──
