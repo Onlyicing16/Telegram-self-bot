@@ -1,24 +1,6 @@
-"""
-Performance metrics collection.
-
-Collects latency, count, and size metrics from every layer. Metrics
-are accumulated in memory and flushed to Supabase in batches by the
-batch_writer module. This is lightweight — no per-call database writes.
-
-Metric types:
-  - Latency: telethon_rpc, supabase_query, provider_response,
-    memory_retrieval, prompt_build, tool_execution, background_task
-  - Count:  handler_invoked, tool_called, save_executed, delete_executed
-  - Size:   buffer_bytes, message_length
-"""
-from __future__ import annotations
-
-import time
-from collections import deque
-from typing import Any
-
 from backend.diagnostics_system.structured_logger import log_trace_event
 from backend.diagnostics_system.trace_context import get_trace_id, get_request_id
+from backend.diagnostics_system.debug_config import is_debug
 
 _MAX_RING = 200
 _metrics_ring: deque = deque(maxlen=_MAX_RING)
@@ -34,6 +16,8 @@ def record_metric(
 
     The batch_writer will flush this to Supabase periodically.
     """
+    if not is_debug():
+        return
     entry = {
         "metric_name": metric_name,
         "value": round(value, 3),
