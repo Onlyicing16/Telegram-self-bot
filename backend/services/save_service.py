@@ -23,6 +23,7 @@ from telethon.tl.types import (
 from backend.bio.engine import _get_tz
 from backend.db import client as db_client
 from backend.diagnostics import record_event
+from backend.diagnostics_system import measure, trace_step, trace_error
 from backend.services import settings_service
 
 logger = logging.getLogger(__name__)
@@ -172,15 +173,7 @@ def _unwrap_forward(result) -> object | None:
 
 
 def parse_telegram_link(link: str) -> tuple[str | None, int, int]:
-    """Parse a t.me / telegram.me link into (username, chat_id, msg_id).
-
-    For private "/c/" links:
-      https://t.me/c/3080318802/42  →  (None, -1003080318802, 42)
-    For username links:
-      https://t.me/somechannel/42    →  ("somechannel", 0, 42)
-
-    Returns (None, 0, 0) if the link doesn't match any known pattern.
-    """
+    """Parse a t.me / telegram.me link into (username, chat_id, msg_id)."""
     m = _LINK_RE.search(link.strip())
     if not m:
         return None, 0, 0
@@ -304,12 +297,7 @@ class _UploadProgressTracker:
 
 
 async def execute_link_save(client, owner_id: int, link: str, tz_str: str, progress_msg=None) -> str:
-    """Resolve a Telegram link, download the media, deep-save it.
-
-    Reuses execute_save's payload/insert logic.  If progress_msg is provided
-    (a Telethon message object), it is edited at most every 2 minutes with
-    real progress from Telethon's download/upload callbacks.
-    """
+    """Resolve a Telegram link, download the media, deep-save it."""
     logger.info("[LINK_SAVE] resolving link: %s", link)
     channel, chat_id, msg_id = parse_telegram_link(link)
     if not channel and not chat_id:
@@ -559,6 +547,9 @@ async def execute_link_save(client, owner_id: int, link: str, tz_str: str, progr
 
 async def execute_save(client, owner_id: int, reply_msg, mode: str, tz_str: str) -> str:
     """Execute a save operation and return a result string."""
+    from backend.diagnostics_system import TraceTimer
+    _timer = TraceTimer("service", "save_service", "execute_save")
+    _timer.start(owner_id=owner_id, mode=mode)
     save_code = await db_client.get_next_save_code()
     tz = _get_tz(tz_str)
     now = datetime.now(tz)
