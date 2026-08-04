@@ -1,5 +1,5 @@
 """
-TraceContext — trace ID / request ID / correlation ID propagation.
+TraceContext — trace ID / request ID / correlation ID / session_id propagation.
 
 Uses Python ``contextvars`` so trace context propagates correctly
 across asyncio tasks without explicit threading. Each incoming event
@@ -7,6 +7,7 @@ gets a fresh TraceContext. Child operations inherit the parent's IDs.
 
 Trace ID:       Groups all steps in one logical execution flow.
 Request ID:     Unique per incoming event/request.
+Session ID:     Unique per process restart (from debug_config).
 Correlation ID: Links related traces across system boundaries (optional).
 """
 from __future__ import annotations
@@ -16,6 +17,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from backend.diagnostics_system.debug_config import get_session_id
+
 
 @dataclass(frozen=True)
 class TraceContext:
@@ -23,6 +26,7 @@ class TraceContext:
 
     trace_id: str
     request_id: str
+    session_id: str = "-"
     correlation_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -44,6 +48,7 @@ def new_trace(correlation_id: str | None = None, **extra: Any) -> TraceContext:
     ctx = TraceContext(
         trace_id=_short_uuid(),
         request_id=_short_uuid(),
+        session_id=get_session_id(),
         correlation_id=correlation_id,
         extra=dict(extra) if extra else {},
     )
@@ -61,6 +66,7 @@ def new_request(correlation_id: str | None = None, **extra: Any) -> TraceContext
         ctx = TraceContext(
             trace_id=parent.trace_id,
             request_id=_short_uuid(),
+            session_id=parent.session_id,
             correlation_id=correlation_id or parent.correlation_id,
             extra={**parent.extra, **extra} if extra else parent.extra,
         )
