@@ -1,31 +1,15 @@
-"""
-Production Diagnostic & Trace System — public API.
-
-This package provides:
-  - TraceContext: trace_id / request_id / correlation_id propagation
-  - Structured logging (machine-readable JSON to stdout)
-  - Performance metrics collection
-  - Batched Supabase persistence with retention
-
-All existing trace/diagnostic infrastructure (backend.diagnostics,
-backend.runtime.tracer, backend.health) continues to work unchanged.
-This system ADDS structured trace persistence on top.
-
-Usage::
-
-    from backend.diagnostics_system import trace_step, trace_error, measure
-
-    with measure("service", "save_service", "execute_save") as m:
-        result = await save_service.execute_save(...)
-        m.set_context(save_code=result)
-        # on exit: trace_step records started→finished with duration
-
-    try:
-        ...
-    except Exception as exc:
-        trace_error("service", "save_service", "execute_save", exc)
-        raise
-"""
+from backend.diagnostics_system.debug_config import (
+    TraceLevel,
+    is_debug,
+    get_trace_level,
+    get_session_id,
+    should_trace,
+    should_trace_error,
+    should_trace_normal,
+    should_trace_verbose,
+    init_config,
+    reload_config,
+)
 from backend.diagnostics_system.trace_context import (
     TraceContext,
     new_trace,
@@ -34,6 +18,23 @@ from backend.diagnostics_system.trace_context import (
     get_trace_id,
     get_request_id,
     get_correlation_id,
+    set_trace_context,
+    reset_trace_context,
+)
+from backend.diagnostics_system.timeline import (
+    Timeline,
+    TimelineStep,
+    new_timeline,
+    get_timeline,
+    set_timeline,
+    reset_timeline,
+)
+from backend.diagnostics_system.exc_context import (
+    get_exc_context,
+    set_exc_context,
+    update_exc_context,
+    clear_exc_context,
+    exc_context_scope,
 )
 from backend.diagnostics_system.structured_logger import (
     structured_log,
@@ -44,6 +45,10 @@ from backend.diagnostics_system.metrics import (
     record_metric,
     record_latency,
     get_metrics_snapshot,
+)
+from backend.diagnostics_system.performance import (
+    record_sample,
+    get_performance_snapshot,
 )
 from backend.diagnostics_system.batch_writer import (
     flush_traces,
@@ -61,6 +66,16 @@ from backend.diagnostics_system.instrument import (
 )
 
 __all__ = [
+    "TraceLevel",
+    "is_debug",
+    "get_trace_level",
+    "get_session_id",
+    "should_trace",
+    "should_trace_error",
+    "should_trace_normal",
+    "should_trace_verbose",
+    "init_config",
+    "reload_config",
     "TraceContext",
     "new_trace",
     "new_request",
@@ -68,12 +83,27 @@ __all__ = [
     "get_trace_id",
     "get_request_id",
     "get_correlation_id",
+    "set_trace_context",
+    "reset_trace_context",
+    "Timeline",
+    "TimelineStep",
+    "new_timeline",
+    "get_timeline",
+    "set_timeline",
+    "reset_timeline",
+    "get_exc_context",
+    "set_exc_context",
+    "update_exc_context",
+    "clear_exc_context",
+    "exc_context_scope",
     "structured_log",
     "log_trace_event",
     "log_error_event",
     "record_metric",
     "record_latency",
     "get_metrics_snapshot",
+    "record_sample",
+    "get_performance_snapshot",
     "flush_traces",
     "flush_metrics",
     "start_batch_writer",

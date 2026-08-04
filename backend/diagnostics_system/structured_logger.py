@@ -2,12 +2,16 @@
 Structured logger — machine-readable JSON to stdout.
 
 Every log line is a JSON object with consistent fields so Render log
-aggregation and grep can parse them uniformly. This complements the
-existing ``backend.runtime.tracer`` (which uses a grep-friendly
-``[TRACE]`` text format) — both can coexist without conflict.
+aggregation and grep can parse them uniformly.
+
+When TRACE_LEVEL=OFF, all logging is suppressed (zero overhead).
+When TRACE_LEVEL=ERROR, only error-level events are logged.
+When TRACE_LEVEL=NORMAL, start/finish/error events are logged.
+When TRACE_LEVEL=VERBOSE, everything is logged including per-RPC details.
 
 Fields:
   - timestamp (ISO 8601 UTC)
+  - session_id
   - trace_id
   - request_id
   - correlation_id
@@ -29,6 +33,12 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.diagnostics_system.debug_config import (
+    should_trace_error,
+    should_trace_normal,
+    should_trace_verbose,
+    get_session_id,
+)
 from backend.diagnostics_system.trace_context import (
     get_correlation_id,
     get_request_id,
@@ -48,11 +58,28 @@ def structured_log(
     status: str = "info",
     duration_ms: float | None = None,
     message: str | None = None,
+    verbose: bool = False,
     **context: Any,
 ) -> None:
-    """Emit a structured JSON log line to stdout."""
+    """Emit a structured JSON log line to stdout.
+
+    The ``verbose`` flag marks events that only appear at VERBOSE level.
+    Error events always appear at ERROR level or above.
+    Normal events appear at NORMAL level or above.
+    """
+    if verbose:
+        if not should_trace_verbose():
+            return
+    elif level >= logging.ERROR:
+        if not should_trace_error():
+            return
+    else:
+        if not should_trace_normal():
+            return
+
     record: dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "session_id": get_session_id(),
         "trace_id": get_trace_id(),
         "request_id": get_request_id(),
         "level": logging.getLevelName(level),
@@ -95,6 +122,7 @@ def log_trace_event(
     status: str = "success",
     duration_ms: float | None = None,
     message: str | None = None,
+    verbose: bool = False,
     **context: Any,
 ) -> None:
     """Log a trace event at INFO level."""
@@ -107,6 +135,7 @@ def log_trace_event(
         status=status,
         duration_ms=duration_ms,
         message=message,
+        verbose=verbose,
         **context,
     )
 
