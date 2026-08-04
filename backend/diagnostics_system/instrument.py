@@ -10,8 +10,14 @@ add diagnostics without changing their logic:
   - ``trace_background()``: decorator for background task lifecycle tracking
   - ``TraceTimer``: low-level timer for manual start/stop
 
-None of these change existing behavior. They only ADD diagnostic output.
-All are safe to call from sync or async contexts.
+All functions respect the global debug config. When TRACE_LEVEL=OFF,
+they are no-ops with zero overhead (no allocations, no logging, no
+database writes).
+
+When tracing is enabled, each call also:
+  - Adds a step to the current Timeline (if one exists)
+  - Records a performance sample
+  - Queues the trace for batched Supabase persistence
 """
 from __future__ import annotations
 
@@ -22,6 +28,11 @@ import traceback as tb_module
 from datetime import datetime, timezone
 from typing import Any, Callable, TypeVar
 
+from backend.diagnostics_system.debug_config import (
+    should_trace_error,
+    should_trace_normal,
+    should_trace_verbose,
+)
 from backend.diagnostics_system.trace_context import (
     TraceContext,
     get_correlation_id,
@@ -38,10 +49,27 @@ from backend.diagnostics_system.structured_logger import (
 )
 from backend.diagnostics_system.metrics import record_latency
 from backend.diagnostics_system.batch_writer import queue_trace
+from backend.diagnostics_system.timeline import get_timeline
+from backend.diagnostics_system.performance import record_sample
 
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable)
+
+
+def _safe_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Filter context to JSON-serializable values."""
+    import json
+    safe: dict[str, Any] = {}
+    for k, v in context.items():
+        if v is None:
+            continue
+        try:
+            json.dumps(v)
+            safe[k] = v
+        except (TypeError, ValueError):
+            safe[k] = str(v)
+    return safe
 
 
 class TraceTimer:
@@ -65,6 +93,8 @@ class TraceTimer:
         self._ctx: TraceContext | None = None
 
     def start(self, **context: Any) -> None:
+        if not should_trace_normal():
+            return
         self._start = time.perf_counter()
         self._ctx = get_trace_context()
         log_trace_event(
@@ -77,6 +107,8 @@ class TraceTimer:
 
     def finish(self, status: str = "success", message: str | None = None, **context: Any) -> float:
         duration_ms = (time.perf_counter() - self._start) * 1000 if self._start else 0.0
+        if not should_trace_normal():
+            return duration_ms
         log_trace_event(
             self._layer, self._module, "finished",
             function=self._function,
@@ -91,11 +123,14 @@ class TraceTimer:
             module=self._module,
             function=self._function,
         )
+        record_sample(f"{self._layer}_duration", duration_ms, error=(status == "failure"))
         self._queue("finished", status, duration_ms, message, context)
         return duration_ms
 
     def fail(self, exc: BaseException, **context: Any) -> float:
         duration_ms = (time.perf_counter() - self._start) * 1000 if self._start else 0.0
+        if not should_trace_error():
+            return duration_ms
         error_type = type(exc).__name__
         error_message = str(exc)[:500]
         stack = "".join(tb_module.format_exception(type(exc), exc, exc.__traceback__))[:2000]
@@ -108,6 +143,7 @@ class TraceTimer:
             duration_ms=duration_ms,
             **context,
         )
+        record_sample(f"{self._layer}_duration", duration_ms, error=True)
         self._queue("error", "failure", duration_ms, error_message, context,
                      error_type=error_type, error_message=error_message, stack_trace=stack)
         return duration_ms
@@ -116,6 +152,8 @@ class TraceTimer:
                message: str | None, context: dict[str, Any],
                error_type: str | None = None, error_message: str | None = None,
                stack_trace: str | None = None) -> None:
+        if not should_trace_normal():
+            return
         entry: dict[str, Any] = {
             "trace_id": get_trace_id(),
             "request_id": get_request_id(),
@@ -138,16 +176,7 @@ class TraceTimer:
             entry["error_message"] = error_message[:500]
         if stack_trace:
             entry["stack_trace"] = stack_trace[:2000]
-        safe_ctx = {}
-        for k, v in context.items():
-            if v is None:
-                continue
-            try:
-                import json
-                json.dumps(v)
-                safe_ctx[k] = v
-            except (TypeError, ValueError):
-                safe_ctx[k] = str(v)
+        safe_ctx = _safe_context(context)
         if safe_ctx:
             entry["context"] = safe_ctx
         queue_trace(entry)
@@ -200,18 +229,30 @@ def trace_step(
     status: str = "success",
     duration_ms: float | None = None,
     message: str | None = None,
+    verbose: bool = False,
     **context: Any,
 ) -> None:
     """Record a single trace step (fire-and-forget).
 
-    Use this for one-off trace events that don't need a start/finish pair.
+    The ``verbose`` flag marks events that only appear at VERBOSE level.
     """
+    if verbose:
+        if not should_trace_verbose():
+            return
+    elif status == "failure" or status == "error":
+        if not should_trace_error():
+            return
+    else:
+        if not should_trace_normal():
+            return
+
     log_trace_event(
         layer, module, event,
         function=function,
         status=status,
         duration_ms=duration_ms,
         message=message,
+        verbose=verbose,
         **context,
     )
     entry: dict[str, Any] = {
@@ -231,16 +272,7 @@ def trace_step(
     cid = get_correlation_id()
     if cid:
         entry["correlation_id"] = cid
-    safe_ctx: dict[str, Any] = {}
-    for k, v in context.items():
-        if v is None:
-            continue
-        try:
-            import json
-            json.dumps(v)
-            safe_ctx[k] = v
-        except (TypeError, ValueError):
-            safe_ctx[k] = str(v)
+    safe_ctx = _safe_context(context)
     if safe_ctx:
         entry["context"] = safe_ctx
     queue_trace(entry)
@@ -254,6 +286,8 @@ def trace_error(
     **context: Any,
 ) -> None:
     """Record an error with full exception details (fire-and-forget)."""
+    if not should_trace_error():
+        return
     error_type = type(exc).__name__
     error_message = str(exc)[:500]
     stack = "".join(tb_module.format_exception(type(exc), exc, exc.__traceback__))[:2000]
@@ -281,16 +315,7 @@ def trace_error(
     cid = get_correlation_id()
     if cid:
         entry["correlation_id"] = cid
-    safe_ctx: dict[str, Any] = {}
-    for k, v in context.items():
-        if v is None:
-            continue
-        try:
-            import json
-            json.dumps(v)
-            safe_ctx[k] = v
-        except (TypeError, ValueError):
-            safe_ctx[k] = str(v)
+    safe_ctx = _safe_context(context)
     if safe_ctx:
         entry["context"] = safe_ctx
     queue_trace(entry)
@@ -338,3 +363,6 @@ def trace_background(task_name: str) -> Callable[[F], F]:
         return wrapper  # type: ignore[return-value]
 
     return decorator
+
+
+import asyncio  # needed by trace_background wrapper
