@@ -1,18 +1,16 @@
 """
 Database interface layer for the AI subsystem.
 
-This package defines repository interfaces for every future AI database
-table. Each repository has:
+This package defines repository interfaces for every AI database table.
+Each repository has:
   - An abstract interface class (the contract)
-  - An in-memory fallback implementation (working today, no DB needed)
+  - An in-memory fallback implementation (working without Supabase)
+  - A Supabase-backed implementation (used when Supabase is available)
 
-When the Supabase migrations are applied (creating ai_sessions, ai_messages,
-ai_memories, ai_provider_stats, ai_usage, ai_preferences, ai_tool_history),
-concrete Supabase-backed implementations will be added alongside the
-in-memory ones. The rest of the codebase will not change — it depends on
-the interfaces, not the implementations.
+The RepositoryManager automatically selects the appropriate implementation
+based on whether Supabase env vars are present.
 
-Repository mapping to future tables:
+Repository mapping to tables:
   SessionRepository        → ai_sessions
   MessageRepository        → ai_messages
   MemoryRepository         → ai_memories
@@ -21,9 +19,11 @@ Repository mapping to future tables:
   PreferencesRepository    → ai_preferences
   ToolHistoryRepository    → ai_tool_history
 
-No migrations are created here. This is interface-only.
+The AIPersistenceService bridges the runtime conversation layer and
+the repository layer, providing best-effort persistence for sessions,
+messages, usage, provider stats, and tool history.
 """
-from backend.ai.database.manager import RepositoryManager
+from backend.ai.database.manager import RepositoryManager, get_repository_manager
 from backend.ai.database.memory_repository import (
     InMemoryMemoryRepository,
     MemoryRepository,
@@ -62,6 +62,7 @@ from backend.ai.database.usage_repository import (
 __all__ = [
     # Manager
     "RepositoryManager",
+    "get_repository_manager",
     # Memory
     "MemoryRepository",
     "InMemoryMemoryRepository",
