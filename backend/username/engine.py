@@ -1,16 +1,5 @@
 """
 Username Engine — renders the Telegram first_name using a template.
-
-Mirrors the Bio Engine exactly, but controls ONLY the "first_name"
-field of UpdateProfileRequest. Completely independent from the Bio
-Engine — both register separate updaters with the shared Profile
-Scheduler.
-
-Guarantees:
-- Deduplicates: returns None when the rendered string has not changed.
-- start_cron / stop_cron delegate to the shared scheduler.
-- Only one scheduler task can exist at a time (idempotent start).
-- Timezone resolved via zoneinfo with UTC fallback — never crashes.
 """
 import asyncio
 import logging
@@ -19,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from backend.db import client as db_client
 from backend.diagnostics import record_event
+from backend.diagnostics_system import trace_step
 from backend.profile import scheduler as profile_scheduler
 from backend.runtime.tracer import trace
 
@@ -38,39 +28,22 @@ def _get_tz(tz_str: str):
 def render_username(template: str, mood: str, text: str, tz_str: str) -> str:
     tz = _get_tz(tz_str)
     now = datetime.now(tz)
-    return (
-        (template or "{time} | {mood}")
-        .replace("{time}", now.strftime("%H:%M"))
-        .replace("{mood}", mood or "😊")
-        .replace("{text}", text or "")
-    )
+    return (template or "{time} | {mood}").replace("{time}", now.strftime("%H:%M")).replace("{mood}", mood or "😊").replace("{text}", text or "")
 
 
 async def _username_updater(owner_id: int, tz_str: str) -> dict[str, str] | None:
-    """Called by the shared profile scheduler each minute.
-
-    Returns ``{"first_name": rendered_name}`` if it changed, or ``None``
-    if it hasn't (deduplication). Also persists the new name to the DB.
-    """
     state = await db_client.get_username_state(owner_id)
     if not state or not state.get("is_active"):
         return None
-
     tmpl = state.get("template", "{time} | {mood}")
     mood = state.get("mood", "😊")
     ctxtxt = state.get("custom_text", "")
-
     new_name = render_username(tmpl, mood, ctxtxt, tz_str)
     last_name = state.get("last_name")
-
     if new_name == (last_name or ""):
         return None
-
     tz = _get_tz(tz_str)
-    await db_client.update_username_state(owner_id, {
-        "last_name": new_name,
-        "updated_at": datetime.now(tz).isoformat(),
-    })
+    await db_client.update_username_state(owner_id, {"last_name": new_name, "updated_at": datetime.now(tz).isoformat()})
     return {"first_name": new_name}
 
 
@@ -87,18 +60,19 @@ def start_cron(client, owner_id: int, tz_str: str) -> None:
     profile_scheduler.start_cron(client, owner_id, tz_str)
     trace("USERNAME_CRON_START_REQUESTED")
     record_event("username", "start_cron", 0, "SUCCESS")
+    trace_step("username", "engine", "start_cron", function="start_cron", status="success", owner_id=owner_id)
 
 
 def update_client(client) -> None:
-    """Swap the client after a rebuild without restarting the username engine."""
     profile_scheduler.update_client(client)
 
 
 async def stop_cron() -> None:
-    """Stop the shared profile scheduler (which serves all engines)."""
     trace("USERNAME_CRON_STOP_REQUESTED")
+    trace_step("username", "engine", "stop_cron", function="stop_cron", status="started")
     await profile_scheduler.stop_cron()
     record_event("username", "stop_cron", 0, "SUCCESS")
+    trace_step("username", "engine", "stop_cron", function="stop_cron", status="success")
 
 
 def is_running() -> bool:

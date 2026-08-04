@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from backend.telegram_api._helpers import serialize_message
@@ -15,6 +16,8 @@ from backend.telegram_api.exceptions import (
     TelegramAPIError,
     TelegramTimeoutError,
 )
+from backend.diagnostics_system import trace_step, trace_error
+from backend.diagnostics_system.metrics import record_latency
 
 logger = logging.getLogger(__name__)
 
@@ -24,32 +27,40 @@ _RPC_TIMEOUT = 30.0
 async def send_message(client: Any, chat_id: int | str, text: str, **kwargs: Any) -> dict[str, Any]:
     """Send a text message. Returns serialized message dict."""
     try:
+        t0 = time.perf_counter()
         msg = await asyncio.wait_for(
             client.send_message(chat_id, text, **kwargs),
             timeout=_RPC_TIMEOUT,
         )
+        record_latency("telethon_rpc", t0, function="send_message")
         return serialize_message(msg)
     except asyncio.TimeoutError:
+        record_latency("telethon_rpc", t0, function="send_message", result="timeout")
         raise TelegramTimeoutError(f"send_message timed out after {_RPC_TIMEOUT}s")
     except Exception as exc:
         if isinstance(exc, TelegramAPIError):
             raise
+        trace_error("telegram_api", "messages", "send_message", exc, function="send_message")
         raise TelegramAPIError(f"send_message failed: {exc}") from exc
 
 
 async def edit_message(client: Any, chat_id: int | str, msg_id: int, text: str, **kwargs: Any) -> dict[str, Any]:
     """Edit a message's text. Returns serialized message dict."""
     try:
+        t0 = time.perf_counter()
         msg = await asyncio.wait_for(
             client.edit_message(chat_id, msg_id, text, **kwargs),
             timeout=_RPC_TIMEOUT,
         )
+        record_latency("telethon_rpc", t0, function="edit_message")
         return serialize_message(msg)
     except asyncio.TimeoutError:
+        record_latency("telethon_rpc", t0, function="edit_message", result="timeout")
         raise TelegramTimeoutError(f"edit_message timed out after {_RPC_TIMEOUT}s")
     except Exception as exc:
         if isinstance(exc, TelegramAPIError):
             raise
+        trace_error("telegram_api", "messages", "edit_message", exc, function="edit_message")
         raise TelegramAPIError(f"edit_message failed: {exc}") from exc
 
 
@@ -58,16 +69,20 @@ async def delete_messages(client: Any, chat_id: int | str, msg_ids: list[int]) -
     if not msg_ids:
         return 0
     try:
+        t0 = time.perf_counter()
         await asyncio.wait_for(
             client.delete_messages(chat_id, msg_ids),
             timeout=_RPC_TIMEOUT,
         )
+        record_latency("telethon_rpc", t0, function="delete_messages")
         return len(msg_ids)
     except asyncio.TimeoutError:
+        record_latency("telethon_rpc", t0, function="delete_messages", result="timeout")
         raise TelegramTimeoutError(f"delete_messages timed out after {_RPC_TIMEOUT}s")
     except Exception as exc:
         if isinstance(exc, TelegramAPIError):
             raise
+        trace_error("telegram_api", "messages", "delete_messages", exc, function="delete_messages")
         raise TelegramAPIError(f"delete_messages failed: {exc}") from exc
 
 
@@ -117,20 +132,24 @@ async def forward_messages(
     if isinstance(msg_ids, int):
         msg_ids = [msg_ids]
     try:
+        t0 = time.perf_counter()
         result = await asyncio.wait_for(
             client.forward_messages(dest_chat_id, msg_ids, from_peer=from_chat_id),
             timeout=_RPC_TIMEOUT,
         )
+        record_latency("telethon_rpc", t0, function="forward_messages")
         if result is None:
             return []
         if isinstance(result, list):
             return [serialize_message(m) for m in result]
         return [serialize_message(result)]
     except asyncio.TimeoutError:
+        record_latency("telethon_rpc", t0, function="forward_messages", result="timeout")
         raise TelegramTimeoutError(f"forward_messages timed out after {_RPC_TIMEOUT}s")
     except Exception as exc:
         if isinstance(exc, TelegramAPIError):
             raise
+        trace_error("telegram_api", "messages", "forward_messages", exc, function="forward_messages")
         raise TelegramAPIError(f"forward_messages failed: {exc}") from exc
 
 

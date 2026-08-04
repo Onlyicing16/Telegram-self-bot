@@ -19,7 +19,7 @@ always the DummyProvider — no HTTP, no SDK, no external API.
 Failure handling:
     Any exception inside any layer is caught by the dispatcher and
     converted into ``EngineResult(success=False)``. The engine never
-    crashes and never propagates uncaught exceptions.
+crashes and never propagates uncaught exceptions.
 """
 from __future__ import annotations
 
@@ -90,15 +90,17 @@ class Engine:
             self._provider_manager.list_providers(),
         )
 
-    # ── Public API ──
-
     def execute(self, user_request: AIRequest) -> EngineResult:
         """Execute a request through the full AI pipeline.
 
         This is the ONLY public execution method. Returns an immutable
         ``EngineResult``. Never raises.
         """
-        return self._dispatcher.dispatch(user_request)
+        from backend.diagnostics_system import measure, trace_step
+        with measure("ai_engine", "engine", "execute", request_id=getattr(user_request, 'request_id', '')):
+            result = self._dispatcher.dispatch(user_request)
+            trace_step("ai_engine", "engine", "execute_complete", function="execute", status="success" if result.success else "failure", provider=result.provider_name)
+            return result
 
     def engine_health(self) -> str:
         """Return ``"READY"`` or ``"FAILED: <reason>"``."""
@@ -112,8 +114,6 @@ class Engine:
             return "READY"
         except Exception as exc:  # noqa: BLE001
             return f"FAILED: {exc}"
-
-    # ── Diagnostics (not part of the public execution API) ──
 
     def metrics_snapshot(self) -> dict[str, Any]:
         """Return a snapshot of aggregate engine metrics. RAM-only."""
@@ -132,17 +132,11 @@ class Engine:
         return self._provider_manager
 
 
-# ── Module-level convenience ──
-
 _default_engine: Engine | None = None
 
 
 def get_engine() -> Engine:
-    """Return the process-wide default Engine instance.
-
-    Constructs it on first call. This is the single Engine instance —
-    there are no duplicated managers or registries.
-    """
+    """Return the process-wide default Engine instance."""
     global _default_engine
     if _default_engine is None:
         _default_engine = Engine()
